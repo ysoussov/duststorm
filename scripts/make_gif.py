@@ -269,7 +269,8 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
         # Person 1 clinging wobble
         wobble = math.sin(i * 0.4) * 8
         h1, w1 = img1.height, img1.width
-        p1x = cactus_x - w1 + 20
+        # place person1 on the right side of the cactus
+        p1x = cactus_x + 40
         p1y = ground_y - h1 - 10 + int(wobble)
         img1_rot = img1.rotate(wobble * 0.6 - 6, resample=Image.BICUBIC)
         # Draw person1 first (behind cactus)
@@ -337,8 +338,8 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
             fy0 = grip_y - 2
             fy1 = grip_y + 10
             grip_draw.rounded_rectangle([fx0, fy0, fx1, fy1], radius=5, fill=skin, outline=outline, width=2)
-        # Thumb wrapping around the left edge
-        grip_draw.rounded_rectangle([cactus_x - 10, grip_y, cactus_x + 8, grip_y + 18], radius=8, fill=skin, outline=outline, width=2)
+        # Thumb wrapping around the right edge
+        grip_draw.rounded_rectangle([cactus_x + trunk_w - 8, grip_y, cactus_x + trunk_w + 10, grip_y + 18], radius=8, fill=skin, outline=outline, width=2)
 
         # Foreground dust
         frame.alpha_composite(dust)
