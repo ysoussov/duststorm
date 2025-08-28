@@ -4,6 +4,7 @@ import random
 from typing import Tuple, Optional
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageEnhance
+import subprocess
 import numpy as np
 import imageio.v2 as imageio
 import imageio_ffmpeg
@@ -178,20 +179,80 @@ def cartoonify_rgba(pil_img: Image.Image) -> Image.Image:
 
 
 def draw_desert(width: int, height: int) -> Image.Image:
-    # Sky gradient
+    # Burning Man inspired background (playa, distant mountains, art structures)
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+
+    # Sky with slight haze
     sky = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     sky_draw = ImageDraw.Draw(sky)
     for y in range(height):
         t = y / max(1, height - 1)
-        r = int(255 * (1 - t) + 255 * t)
-        g = int(200 * (1 - t) + 215 * t)
-        b = int(120 * (1 - t) + 170 * t)
+        r = int(240 * (1 - t) + 255 * t)
+        g = int(220 * (1 - t) + 235 * t)
+        b = int(190 * (1 - t) + 220 * t)
         sky_draw.line([(0, y), (width, y)], fill=(r, g, b, 255))
-    # Sand
-    sand = Image.new("RGBA", (width, height // 3), (225, 190, 120, 255))
+
+    # Distant mountains silhouette
+    mnt = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    md = ImageDraw.Draw(mnt)
+    ridge = []
+    for x in range(0, width + 1, 40):
+        y = int(height * 0.52 + 20 * math.sin(x * 0.01) + 35 * math.sin(x * 0.03 + 1))
+        ridge.append((x, y))
+    ridge = [(0, height), (0, ridge[0][1])] + ridge + [(width, ridge[-1][1]), (width, height)]
+    md.polygon(ridge, fill=(120, 130, 150, 180))
+    mnt = mnt.filter(ImageFilter.GaussianBlur(radius=2))
+
+    # Playa (alkali flats)
+    playa = Image.new("RGBA", (width, height // 2), (230, 220, 200, 255))
+    # subtle cracks/noise
+    pd = ImageDraw.Draw(playa)
+    for i in range(140):
+        x = random.randint(0, width)
+        y = random.randint(0, playa.size[1] - 1)
+        ln = random.randint(10, 40)
+        ang = random.uniform(-math.pi / 2, math.pi / 2)
+        x2 = int(x + ln * math.cos(ang))
+        y2 = int(y + ln * math.sin(ang))
+        pd.line([(x, y), (x2, y2)], fill=(200, 190, 175, 70), width=1)
+
+    # Composite layers
     img.alpha_composite(sky, (0, 0))
-    img.alpha_composite(sand, (0, height - height // 3))
+    img.alpha_composite(mnt, (0, 0))
+    img.alpha_composite(playa, (0, height - playa.size[1]))
+
+    # Simple temple/man silhouette and a dome
+    d = ImageDraw.Draw(img)
+    # The Man on a base
+    base_y = int(height * 0.68)
+    cx = int(width * 0.38)
+    d.rectangle((cx - 18, base_y - 12, cx + 18, base_y), fill=(90, 90, 90, 200))
+    # body
+    d.line([(cx, base_y - 12), (cx, base_y - 80)], fill=(100, 100, 100, 220), width=5)
+    # arms
+    d.line([(cx - 30, base_y - 55), (cx + 30, base_y - 55)], fill=(100, 100, 100, 220), width=5)
+    # legs
+    d.line([(cx, base_y - 12), (cx - 20, base_y - 12 - 35)], fill=(100, 100, 100, 220), width=5)
+    d.line([(cx, base_y - 12), (cx + 20, base_y - 12 - 35)], fill=(100, 100, 100, 220), width=5)
+    # head
+    d.ellipse((cx - 8, base_y - 92, cx + 8, base_y - 76), fill=(120, 120, 120, 220))
+
+    # Geodesic dome
+    dome_c = (int(width * 0.7), base_y - 10)
+    dome_r = 60
+    d.ellipse((dome_c[0] - dome_r, dome_c[1] - dome_r, dome_c[0] + dome_r, dome_c[1] + dome_r), outline=(110, 110, 120, 220), width=3)
+    for a in range(0, 180, 20):
+        x = dome_c[0] + int(dome_r * math.cos(math.radians(a)))
+        y = dome_c[1] - int(dome_r * math.sin(math.radians(a)))
+        d.line([dome_c, (x, y)], fill=(110, 110, 120, 160), width=2)
+    # art car
+    car_y = base_y + 8
+    d.rectangle((int(width * 0.15), car_y - 16, int(width * 0.23), car_y), fill=(120, 120, 120, 180))
+    d.ellipse((int(width * 0.16), car_y, int(width * 0.18), car_y + 18), fill=(80, 80, 80, 220))
+    d.ellipse((int(width * 0.20), car_y, int(width * 0.22), car_y + 18), fill=(80, 80, 80, 220))
+    d.line([(int(width * 0.215), car_y - 16), (int(width * 0.215), car_y - 48)], fill=(120, 120, 120, 180), width=3)
+    d.polygon([(int(width * 0.215), car_y - 48), (int(width * 0.195), car_y - 40), (int(width * 0.215), car_y - 32)], fill=(220, 50, 50, 200))
+
     return img
 
 
@@ -401,35 +462,54 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
             p2x = int(start_x + (target_x - start_x) * ease)
             p2y = int(start_y + (target_y - start_y) * ease - arc_h * math.sin(math.pi * ease)) + fly_bob
 
-            # Draw cape between cactus and hero
+            # Draw cape between cactus and hero (enhanced, with shading and flutter)
             cape_draw = ImageDraw.Draw(frame)
-            cape_color = (220, 30, 50, 220)
-            cape_wind = int(80 + 40 * math.sin(i * 0.3 + 1.0))
+            base_color = (220, 30, 50, 220)
+            shadow_color = (150, 20, 40, 180)
+            highlight = (255, 90, 110, 180)
+            wind_amp = int(90 + 60 * math.sin(i * 0.35 + 1.2) + 30 * wind)
             cape_attach = (p2x + int(w2 * 0.55), p2y + int(h2 * 0.18))
-            cape_tip1 = (cape_attach[0] - cape_wind, cape_attach[1] + int(h2 * 0.25))
-            cape_tip2 = (cape_attach[0] - cape_wind // 2, cape_attach[1] + int(h2 * 0.55))
-            cape_poly = [
+            wave1 = (cape_attach[0] - wind_amp, cape_attach[1] + int(h2 * 0.25))
+            wave2 = (cape_attach[0] - int(wind_amp * 0.6), cape_attach[1] + int(h2 * 0.55))
+            wave3 = (cape_attach[0] - int(wind_amp * 1.2), cape_attach[1] + int(h2 * 0.42))
+            poly = [
                 (cape_attach[0], cape_attach[1] - 6),
-                (cape_attach[0] + 6, cape_attach[1] + 2),
-                cape_tip1,
-                cape_tip2,
-                (cape_attach[0] - 10, cape_attach[1] + 12),
+                (cape_attach[0] + 8, cape_attach[1] + 2),
+                wave1,
+                wave2,
+                wave3,
+                (cape_attach[0] - 12, cape_attach[1] + 12),
             ]
-            cape_draw.polygon(cape_poly, fill=cape_color)
+            cape_draw.polygon(poly, fill=base_color)
+            # Shadow fold
+            cape_draw.line([cape_attach, wave2], fill=shadow_color, width=16)
+            # Highlight edge
+            cape_draw.line([cape_attach, wave3], fill=highlight, width=6)
 
             img2_rot = img2.rotate(-8, resample=Image.BICUBIC)
             # Rescuer in front of cactus
             frame.alpha_composite(img2_rot, (p2x, p2y))
 
-            # Emblem and mask on top of hero
+            # Emblem and mask on top of hero (customizable)
             deco = ImageDraw.Draw(frame)
+            emblem_letter = os.environ.get('HERO_EMBLEM', 'H')[:1]
+            emblem_fill = tuple(int(x) for x in os.environ.get('HERO_EMBLEM_COLOR', '255,215,0').split(',')) + (240,)
+            emblem_icon = tuple(int(x) for x in os.environ.get('HERO_ICON_COLOR', '255,60,60').split(',')) + (255,)
+            mask_color = tuple(int(x) for x in os.environ.get('HERO_MASK_COLOR', '0,0,0').split(',')) + (220,)
+
             chest_cx = p2x + int(w2 * 0.55)
             chest_cy = p2y + int(h2 * 0.45)
-            deco.ellipse((chest_cx - 22, chest_cy - 22, chest_cx + 22, chest_cy + 22), fill=(255, 215, 0, 240), outline=(120, 60, 0, 255), width=3)
-            deco.regular_polygon((chest_cx, chest_cy, 12), n_sides=5, rotation=18, fill=(255, 60, 60, 255))
+            deco.ellipse((chest_cx - 22, chest_cy - 22, chest_cx + 22, chest_cy + 22), fill=emblem_fill, outline=(120, 60, 0, 255), width=3)
+            deco.regular_polygon((chest_cx, chest_cy, 12), n_sides=5, rotation=18, fill=emblem_icon)
+            try:
+                font = ImageFont.truetype("Arial.ttf", 18)
+            except Exception:
+                font = ImageFont.load_default()
+            tw, th = deco.textbbox((0, 0), emblem_letter, font=font)[2:]
+            deco.text((chest_cx - tw / 2, chest_cy - th / 2), emblem_letter, fill=(20, 20, 20, 255), font=font)
             # Eye mask
             eye_y = p2y + int(h2 * 0.22)
-            deco.rounded_rectangle((p2x + int(w2 * 0.42), eye_y - 6, p2x + int(w2 * 0.68), eye_y + 10), radius=6, fill=(0, 0, 0, 220))
+            deco.rounded_rectangle((p2x + int(w2 * 0.42), eye_y - 6, p2x + int(w2 * 0.68), eye_y + 10), radius=6, fill=mask_color)
 
             # Draw a simple connecting arm cartoon line (rescue grip)
             hand1 = (p1x + int(img1.width * 0.82), p1y + int(img1.height * 0.60))
@@ -551,6 +631,58 @@ def main() -> None:
     finally:
         writer.close()
     print(f"Saved: {mp4_path}")
+
+    # Generate or use custom audio SFX and mux
+    out_with_audio = os.path.join(OUTPUT_DIR, "duststorm_with_audio.mp4")
+    duration = 10
+
+    inputs_dir = INPUT_DIR
+    custom_wind = os.environ.get('WIND_SFX', os.path.join(inputs_dir, 'wind.wav'))
+    custom_whoosh = os.environ.get('WHOOSH_SFX', os.path.join(inputs_dir, 'whoosh.wav'))
+    custom_impact = os.environ.get('IMPACT_SFX', os.path.join(inputs_dir, 'impact.wav'))
+
+    wind_offset = float(os.environ.get('WIND_OFFSET', '0.0'))
+    whoosh_offset = float(os.environ.get('WHOOSH_OFFSET', '3.0'))
+    impact_offset = float(os.environ.get('IMPACT_OFFSET', '7.0'))
+
+    wind_vol = float(os.environ.get('WIND_VOL', '0.8'))
+    whoosh_vol = float(os.environ.get('WHOOSH_VOL', '1.1'))
+    impact_vol = float(os.environ.get('IMPACT_VOL', '1.6'))
+
+    wind_path = custom_wind if os.path.exists(custom_wind) else os.path.join(OUTPUT_DIR, 'wind.wav')
+    whoosh_path = custom_whoosh if os.path.exists(custom_whoosh) else os.path.join(OUTPUT_DIR, 'whoosh.wav')
+    impact_path = custom_impact if os.path.exists(custom_impact) else os.path.join(OUTPUT_DIR, 'impact.wav')
+
+    # Synthesize defaults only if not provided
+    if not os.path.exists(custom_wind):
+        subprocess.run(['ffmpeg','-y','-f','lavfi','-i','anoisesrc=color=pink:amplitude=0.35','-t',str(duration), wind_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not os.path.exists(custom_whoosh):
+        subprocess.run(['ffmpeg','-y','-f','lavfi','-i','sine=f=220:duration=0.6','-af','asetrate=44100*1.7,atempo=1.0,alimiter=level_in=5:level_out=1', whoosh_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not os.path.exists(custom_impact):
+        subprocess.run(['ffmpeg','-y','-f','lavfi','-i','sine=f=55:duration=0.25','-af','aecho=0.7:0.88:12:0.35,alimiter=level_in=3:level_out=1', impact_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # Volume-adjust temporary files
+    wind_adj = os.path.join(OUTPUT_DIR, 'wind_adj.wav')
+    whoosh_adj = os.path.join(OUTPUT_DIR, 'whoosh_adj.wav')
+    impact_adj = os.path.join(OUTPUT_DIR, 'impact_adj.wav')
+    subprocess.run(['ffmpeg','-y','-i', wind_path,'-filter:a', f'volume={wind_vol}', wind_adj], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(['ffmpeg','-y','-i', whoosh_path,'-filter:a', f'volume={whoosh_vol}', whoosh_adj], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(['ffmpeg','-y','-i', impact_path,'-filter:a', f'volume={impact_vol}', impact_adj], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # Mix with offsets
+    mix_aud = os.path.join(OUTPUT_DIR, 'mix.wav')
+    subprocess.run([
+        'ffmpeg','-y',
+        '-i', wind_adj,
+        '-itsoffset', str(whoosh_offset), '-i', whoosh_adj,
+        '-itsoffset', str(impact_offset), '-i', impact_adj,
+        '-filter_complex','[0:a][1:a][2:a]amix=inputs=3:dropout_transition=0:weights=1 1 1,volume=1.1',
+        '-t', str(duration), mix_aud
+    ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # Mux
+    subprocess.run(['ffmpeg','-y','-i', mp4_path,'-i', mix_aud,'-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-shortest', out_with_audio], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"Saved: {out_with_audio}")
 
 
 if __name__ == "__main__":
