@@ -415,6 +415,18 @@ def draw_lightning(canvas: Image.Image, start: Tuple[int, int], end: Tuple[int, 
         draw.line([base, fork_end], fill=(255, 255, 255, 220), width=2)
 
 
+def draw_radial_glow(canvas: Image.Image, center: Tuple[int, int], radius: int, color=(255, 200, 120), intensity: float = 0.6) -> None:
+    glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    cx, cy = center
+    steps = 8
+    for i in range(steps, 0, -1):
+        r = int(radius * i / steps)
+        a = int(255 * intensity * (i / steps) ** 2)
+        gd.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(color[0], color[1], color[2], a))
+    canvas.alpha_composite(glow)
+
+
 def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, height: int = 720, frames: int = 240) -> list[Image.Image]:
     rng = random.Random(42)
     result = []
@@ -430,6 +442,16 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
         wind = 0.4 + 0.9 * t
         angle = -15 - 10 * math.sin(t * math.pi)
         dust = make_dust_layer(width, height, strength=wind, angle_deg=angle)
+
+        # Burning Man additions: art car lights flicker
+        if i % 5 == 0:
+            ac_light = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            ld = ImageDraw.Draw(ac_light)
+            for j in range(6):
+                lx = int(width * 0.16 + j * 10)
+                ly = int(ground_y - 18 + (j % 2) * 4)
+                ld.ellipse((lx, ly, lx + 6, ly + 6), fill=(255, 200, 120, random.randint(120, 220)))
+            base = Image.alpha_composite(base, ac_light)
 
         # Person 1 clinging wobble
         wobble = math.sin(i * 0.4) * 8
@@ -571,6 +593,11 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
         if 0.55 < t < 0.65 and i % 8 == 0:
             draw_lightning(frame, (int(width * 0.75), int(height * 0.1)), (int(width * 0.6), int(height * 0.35)))
 
+        # Man burn glow (subtle pulsing near the symbolic Man)
+        man_center = (int(width * 0.38), int(height * 0.68) - 40)
+        glow_radius = 60 + int(8 * math.sin(i * 0.25))
+        draw_radial_glow(frame, man_center, glow_radius, color=(255, 180, 80), intensity=0.3)
+
         # Duplicate a couple frames around impact for a tiny hold
         result.append(frame)
         if abs(t - 0.7) < 0.02:
@@ -657,9 +684,11 @@ def main() -> None:
     if not os.path.exists(custom_wind):
         subprocess.run(['ffmpeg','-y','-f','lavfi','-i','anoisesrc=color=pink:amplitude=0.35','-t',str(duration), wind_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if not os.path.exists(custom_whoosh):
-        subprocess.run(['ffmpeg','-y','-f','lavfi','-i','sine=f=220:duration=0.6','-af','asetrate=44100*1.7,atempo=1.0,alimiter=level_in=5:level_out=1', whoosh_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Sweep noise whoosh using filtered noise + pitch glide
+        subprocess.run(['ffmpeg','-y','-f','lavfi','-i','anoisesrc=color=white:amplitude=0.7:seed=42','-t','0.8','-af','afftdn=nr=10,highpass=f=400,asetpts=N/SR,areverse,lowpass=f=2000,areverse,volume=0.9', whoosh_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if not os.path.exists(custom_impact):
-        subprocess.run(['ffmpeg','-y','-f','lavfi','-i','sine=f=55:duration=0.25','-af','aecho=0.7:0.88:12:0.35,alimiter=level_in=3:level_out=1', impact_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Impact: short burst + low thump + slight distortion
+        subprocess.run(['ffmpeg','-y','-f','lavfi','-i','sine=f=55:duration=0.25','-af','acompressor=threshold=0.7:ratio=8:attack=5:release=50,alimiter=level_in=4:level_out=1,aecho=0.6:0.7:20:0.2', impact_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # Volume-adjust temporary files
     wind_adj = os.path.join(OUTPUT_DIR, 'wind_adj.wav')
