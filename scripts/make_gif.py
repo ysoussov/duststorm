@@ -3,7 +3,7 @@ import math
 import random
 from typing import Tuple, Optional
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageEnhance
 import numpy as np
 import imageio.v2 as imageio
 import imageio_ffmpeg
@@ -314,7 +314,47 @@ def apply_shake_and_zoom(frame: Image.Image, shake_px: int, zoom: float) -> Imag
     return frame
 
 
-def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, height: int = 720, frames: int = 40) -> list[Image.Image]:
+def apply_color_grade(frame: Image.Image, warmth: float = 1.08, contrast: float = 1.12, brightness: float = 1.03) -> Image.Image:
+    graded = frame
+    # Subtle warm tint using overlay blend
+    warm_layer = Image.new("RGBA", graded.size, (255, 200, 120, 40))
+    graded = Image.alpha_composite(graded, warm_layer)
+    # Enhance contrast and brightness
+    graded = ImageEnhance.Contrast(graded).enhance(contrast)
+    graded = ImageEnhance.Brightness(graded).enhance(brightness)
+    graded = ImageEnhance.Color(graded).enhance(warmth)
+    return graded
+
+
+def draw_lightning(canvas: Image.Image, start: Tuple[int, int], end: Tuple[int, int], forks: int = 2) -> None:
+    draw = ImageDraw.Draw(canvas)
+    points = [start]
+    steps = 6
+    for i in range(1, steps):
+        t = i / steps
+        jitter = 30 * (1 - t)
+        x = int(start[0] + (end[0] - start[0]) * t + random.uniform(-jitter, jitter))
+        y = int(start[1] + (end[1] - start[1]) * t + random.uniform(-jitter, jitter))
+        points.append((x, y))
+    points.append(end)
+    # Glow underlay
+    glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    gd.line(points, fill=(255, 255, 180, 220), width=6)
+    glow = glow.filter(ImageFilter.GaussianBlur(radius=6))
+    canvas.alpha_composite(glow)
+    # Core bolt
+    draw.line(points, fill=(255, 255, 255, 255), width=3)
+    # Small forks near the end
+    for k in range(forks):
+        if len(points) < 3:
+            break
+        base = points[-(2 + k)]
+        fork_end = (base[0] + random.randint(-50, 50), base[1] + random.randint(-60, -20))
+        draw.line([base, fork_end], fill=(255, 255, 255, 220), width=2)
+
+
+def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, height: int = 720, frames: int = 240) -> list[Image.Image]:
     rng = random.Random(42)
     result = []
     base = draw_desert(width, height)
@@ -326,7 +366,7 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
         frame = base.copy()
 
         # Wind strength ramps up
-        wind = 0.3 + 0.7 * t
+        wind = 0.4 + 0.9 * t
         angle = -15 - 10 * math.sin(t * math.pi)
         dust = make_dust_layer(width, height, strength=wind, angle_deg=angle)
 
@@ -344,11 +384,11 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
         draw_cactus(frame, cactus_x, ground_y, scale=1.0)
 
         # Person 2 enters from right to save starting mid-way
-        if t < 0.45:
+        if t < 0.25:
             # not yet
             pass
         else:
-            enter = min(1.0, (t - 0.45) / 0.45)
+            enter = min(1.0, (t - 0.25) / 0.55)
             h2, w2 = img2.height, img2.width
             fly_bob = int(math.sin(i * 0.45) * 6)
             # Target is near person1's rescue hand
@@ -417,7 +457,7 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
 
         # Foreground dust and occasional big dust burst
         frame.alpha_composite(dust)
-        if 0.45 < t < 0.7 and i % 3 == 0:
+        if 0.3 < t < 0.8 and i % 3 == 0:
             burst = make_dust_layer(width, height, strength=1.2, angle_deg=angle - 10)
             frame.alpha_composite(burst)
 
@@ -425,9 +465,9 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
             draw_speech_bubble(frame, "Hang on!", (cactus_x + 140, ground_y - 340), (cactus_x + 70, ground_y - 230))
         else:
             draw_speech_bubble(frame, "I got you!", (cactus_x + 180, ground_y - 360), (cactus_x + 90, ground_y - 260))
-        if 0.45 < t < 0.65 and i % 4 == 0:
+        if 0.3 < t < 0.65 and i % 4 == 0:
             add_text(frame, "WHOOOOSH!", (int(width * 0.55), int(height * 0.18)), color=(255, 230, 120, 230))
-        if abs(t - 0.65) < 0.03:
+        if abs(t - 0.7) < 0.02:
             draw_starburst(frame, (int(width * 0.46), int(height * 0.28)), radius=90)
             add_text(frame, "THWUMP!", (int(width * 0.42), int(height * 0.25)), color=(60, 20, 20, 255))
 
@@ -440,13 +480,20 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
         frame = Image.composite(frame, Image.new("RGBA", (width, height), (0, 0, 0, 255)), vignette)
 
         # Camera shake and dramatic zoom near rescue
-        zoom = 1.0 + 0.05 * (1 if t > 0.5 else t * 2)
-        shake = int(2 + 6 * wind)
+        zoom = 1.0 + 0.08 * (1 if t > 0.5 else t * 2)
+        shake = int(2 + 8 * wind)
         frame = apply_shake_and_zoom(frame, shake_px=shake, zoom=zoom)
+
+        # Color grade for punch
+        frame = apply_color_grade(frame, warmth=1.1, contrast=1.18, brightness=1.04)
+
+        # Occasional lightning flash in clouds
+        if 0.55 < t < 0.65 and i % 8 == 0:
+            draw_lightning(frame, (int(width * 0.75), int(height * 0.1)), (int(width * 0.6), int(height * 0.35)))
 
         # Duplicate a couple frames around impact for a tiny hold
         result.append(frame)
-        if abs(t - 0.65) < 0.02:
+        if abs(t - 0.7) < 0.02:
             result.append(frame.copy())
             result.append(frame.copy())
     return result
