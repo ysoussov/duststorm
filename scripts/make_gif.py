@@ -250,6 +250,38 @@ def add_text(canvas: Image.Image, text: str, xy: Tuple[int, int], color=(255, 25
     draw.text((x, y), text, fill=color, font=font)
 
 
+def add_speed_lines(canvas: Image.Image, center: Tuple[int, int], angle_deg: float, length: int, count: int = 18, color=(255, 255, 255, 110)) -> None:
+    draw = ImageDraw.Draw(canvas)
+    angle = math.radians(angle_deg)
+    cx, cy = center
+    for i in range(count):
+        spread = (i - count / 2) / (count / 2)
+        offset = int(spread * 40)
+        x0 = cx - int(length * math.cos(angle)) + offset
+        y0 = cy - int(length * math.sin(angle)) + offset
+        x1 = cx + int(length * 0.2 * math.cos(angle)) + offset
+        y1 = cy + int(length * 0.2 * math.sin(angle)) + offset
+        draw.line([(x0, y0), (x1, y1)], fill=color, width=2)
+
+
+def apply_shake_and_zoom(frame: Image.Image, shake_px: int, zoom: float) -> Image.Image:
+    if zoom != 1.0:
+        w, h = frame.size
+        zw, zh = int(w * zoom), int(h * zoom)
+        fr = frame.resize((zw, zh), Image.LANCZOS)
+        # crop center back to original size
+        left = (zw - w) // 2
+        top = (zh - h) // 2
+        frame = fr.crop((left, top, left + w, top + h))
+    if shake_px > 0:
+        dx = random.randint(-shake_px, shake_px)
+        dy = random.randint(-shake_px, shake_px)
+        shaken = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+        shaken.alpha_composite(frame, (dx, dy))
+        return shaken
+    return frame
+
+
 def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, height: int = 720, frames: int = 40) -> list[Image.Image]:
     rng = random.Random(42)
     result = []
@@ -287,8 +319,15 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
             enter = min(1.0, (t - 0.45) / 0.45)
             h2, w2 = img2.height, img2.width
             fly_bob = int(math.sin(i * 0.45) * 6)
-            p2x = int(width - w2 - 40 - 420 * (1 - enter))
-            p2y = ground_y - h2 - 60 + fly_bob  # hover slightly for superhero vibe
+            # Target is near person1's rescue hand
+            target_x = p1x + int(img1.width * 0.82)
+            target_y = p1y + int(img1.height * 0.60)
+            start_x = width + w2
+            start_y = int(height * 0.25)
+            arc_h = int(height * 0.25)
+            ease = 1 - pow(1 - enter, 3)  # ease-out cubic
+            p2x = int(start_x + (target_x - start_x) * ease)
+            p2y = int(start_y + (target_y - start_y) * ease - arc_h * math.sin(math.pi * ease)) + fly_bob
 
             # Draw cape between cactus and hero
             cape_draw = ImageDraw.Draw(frame)
@@ -325,6 +364,9 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
             hand2 = (p2x + int(w2 * 0.20), p2y + int(h2 * 0.62))
             deco.line([hand1, hand2], fill=(80, 50, 30, 255), width=10)
 
+            # Speed lines around hero
+            add_speed_lines(frame, (p2x + int(w2 * 0.5), p2y + int(h2 * 0.4)), angle_deg=-20, length=180, count=22, color=(255, 255, 255, 140))
+
         # Ensure visible grip around the cactus: palm + fingers in front
         grip_draw = ImageDraw.Draw(frame)
         trunk_w = 50
@@ -341,13 +383,20 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
         # Thumb wrapping around the right edge
         grip_draw.rounded_rectangle([cactus_x + trunk_w - 8, grip_y, cactus_x + trunk_w + 10, grip_y + 18], radius=8, fill=skin, outline=outline, width=2)
 
-        # Foreground dust
+        # Foreground dust and occasional big dust burst
         frame.alpha_composite(dust)
+        if 0.45 < t < 0.7 and i % 3 == 0:
+            burst = make_dust_layer(width, height, strength=1.2, angle_deg=angle - 10)
+            frame.alpha_composite(burst)
 
         if i < frames // 2:
             add_text(frame, "Hang on!", (cactus_x + 80, ground_y - 300))
         else:
             add_text(frame, "I got you!", (cactus_x + 120, ground_y - 320))
+        if 0.45 < t < 0.65 and i % 4 == 0:
+            add_text(frame, "WHOOOOSH!", (int(width * 0.55), int(height * 0.18)), color=(255, 230, 120, 230))
+        if abs(t - 0.65) < 0.03:
+            add_text(frame, "THWUMP!", (int(width * 0.46), int(height * 0.28)), color=(255, 120, 120, 255))
 
         # Vignette
         vignette = Image.new("L", (width, height), 0)
@@ -357,7 +406,16 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
         frame.putalpha(255)
         frame = Image.composite(frame, Image.new("RGBA", (width, height), (0, 0, 0, 255)), vignette)
 
+        # Camera shake and dramatic zoom near rescue
+        zoom = 1.0 + 0.05 * (1 if t > 0.5 else t * 2)
+        shake = int(2 + 6 * wind)
+        frame = apply_shake_and_zoom(frame, shake_px=shake, zoom=zoom)
+
+        # Duplicate a couple frames around impact for a tiny hold
         result.append(frame)
+        if abs(t - 0.65) < 0.02:
+            result.append(frame.copy())
+            result.append(frame.copy())
     return result
 
 
