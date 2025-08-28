@@ -6,6 +6,7 @@ from typing import Tuple, Optional
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import numpy as np
 import imageio.v2 as imageio
+import imageio_ffmpeg
 
 try:
     import cv2  # type: ignore
@@ -264,6 +265,37 @@ def add_speed_lines(canvas: Image.Image, center: Tuple[int, int], angle_deg: flo
         draw.line([(x0, y0), (x1, y1)], fill=color, width=2)
 
 
+def draw_speech_bubble(canvas: Image.Image, text: str, anchor: Tuple[int, int], pointing_to: Tuple[int, int], bubble_color=(255, 255, 255, 240), outline=(30, 30, 30, 255)) -> None:
+    draw = ImageDraw.Draw(canvas)
+    try:
+        font = ImageFont.truetype("Arial.ttf", 28)
+    except Exception:
+        font = ImageFont.load_default()
+    margin = 16
+    tw, th = draw.textbbox((0, 0), text, font=font)[2:]
+    w = tw + margin * 2
+    h = th + margin * 2
+    x, y = anchor
+    rect = (x, y, x + w, y + h)
+    draw.rounded_rectangle(rect, radius=18, fill=bubble_color, outline=outline, width=4)
+    # tail
+    px, py = pointing_to
+    tail = [(x + w - 30, y + h), (x + w - 10, y + h), (px, py)]
+    draw.polygon(tail, fill=bubble_color, outline=outline)
+    draw.text((x + margin, y + margin - 4), text, fill=(20, 20, 20, 255), font=font)
+
+
+def draw_starburst(canvas: Image.Image, center: Tuple[int, int], radius: int, spikes: int = 14, color=(255, 230, 120, 240), outline=(120, 60, 0, 255)) -> None:
+    draw = ImageDraw.Draw(canvas)
+    cx, cy = center
+    pts = []
+    for i in range(spikes * 2):
+        r = radius if i % 2 == 0 else int(radius * 0.55)
+        a = (i / (spikes * 2)) * 2 * math.pi
+        pts.append((cx + int(r * math.cos(a)), cy + int(r * math.sin(a))))
+    draw.polygon(pts, fill=color, outline=outline)
+
+
 def apply_shake_and_zoom(frame: Image.Image, shake_px: int, zoom: float) -> Image.Image:
     if zoom != 1.0:
         w, h = frame.size
@@ -390,13 +422,14 @@ def compose_frames(img1: Image.Image, img2: Image.Image, width: int = 960, heigh
             frame.alpha_composite(burst)
 
         if i < frames // 2:
-            add_text(frame, "Hang on!", (cactus_x + 80, ground_y - 300))
+            draw_speech_bubble(frame, "Hang on!", (cactus_x + 140, ground_y - 340), (cactus_x + 70, ground_y - 230))
         else:
-            add_text(frame, "I got you!", (cactus_x + 120, ground_y - 320))
+            draw_speech_bubble(frame, "I got you!", (cactus_x + 180, ground_y - 360), (cactus_x + 90, ground_y - 260))
         if 0.45 < t < 0.65 and i % 4 == 0:
             add_text(frame, "WHOOOOSH!", (int(width * 0.55), int(height * 0.18)), color=(255, 230, 120, 230))
         if abs(t - 0.65) < 0.03:
-            add_text(frame, "THWUMP!", (int(width * 0.46), int(height * 0.28)), color=(255, 120, 120, 255))
+            draw_starburst(frame, (int(width * 0.46), int(height * 0.28)), radius=90)
+            add_text(frame, "THWUMP!", (int(width * 0.42), int(height * 0.25)), color=(60, 20, 20, 255))
 
         # Vignette
         vignette = Image.new("L", (width, height), 0)
@@ -461,9 +494,16 @@ def main() -> None:
         img2 = placeholder_head("P2", (255, 120, 60))
 
     frames = compose_frames(img1, img2)
-    out_path = os.path.join(OUTPUT_DIR, "duststorm.gif")
-    save_gif(frames, out_path, fps=12)
-    print(f"Saved: {out_path}")
+    # Save MP4 using imageio-ffmpeg
+    mp4_path = os.path.join(OUTPUT_DIR, "duststorm.mp4")
+    fps = 24
+    writer = imageio.get_writer(mp4_path, fps=fps, codec='libx264', quality=8, macro_block_size=None)
+    try:
+        for f in frames:
+            writer.append_data(np.array(f.convert("RGB")))
+    finally:
+        writer.close()
+    print(f"Saved: {mp4_path}")
 
 
 if __name__ == "__main__":
